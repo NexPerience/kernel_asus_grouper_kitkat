@@ -1,6 +1,6 @@
 VERSION = 3
 PATCHLEVEL = 2
-SUBLEVEL = 5-XPerience
+SUBLEVEL = 5
 EXTRAVERSION =
 NAME = "Divemaster Edition XPerience"
 
