@@ -141,7 +141,7 @@ static atomic_t touch_char_available = ATOMIC_INIT(1);
 	static struct proc_dir_entry *dbgProcFile;
 #endif
 
-#define ELAN_I2c_RETRY 5
+#define ELAN_I2C_RETRY 5
 
 struct elan_ktf3k_ts_data {
 	struct i2c_client *client;
