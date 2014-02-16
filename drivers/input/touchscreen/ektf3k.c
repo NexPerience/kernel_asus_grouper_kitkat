@@ -141,6 +141,8 @@ static atomic_t touch_char_available = ATOMIC_INIT(1);
 	static struct proc_dir_entry *dbgProcFile;
 #endif
 
+#define ELAN_I2c_RETRY 5
+
 struct elan_ktf3k_ts_data {
 	struct i2c_client *client;
 	struct input_dev *input_dev;
@@ -547,7 +549,7 @@ static int elan_ktf3k_ts_read_command(struct i2c_client *client,
 	struct i2c_msg msg[2];
 	__le16 le_addr;
 	struct elan_ktf3k_ts_data *ts;
-	int length = 0;
+	int retry = 0;
 
 	ts = i2c_get_clientdata(client);
 
@@ -556,14 +558,19 @@ static int elan_ktf3k_ts_read_command(struct i2c_client *client,
 	msg[0].len = cmd_length;
 	msg[0].buf = cmd;
 
-	down(&pSem);
-	length = i2c_transfer(adapter, msg, 1);
-	up(&pSem);
-	
-	if (length == 1) // only send on packet
-		return value_length;
-	else
-		return -EIO;
+	for (retry = 0; retry <= ELAN_I2C_RETRY; retry++) {
+		down(&pSem);
+		if (i2c_transfer(adapter, msg, 1) == 1) {
+			up(&pSem);
+			return value_length;
+		}
+		up(&pSem);
+		if (retry == ELAN_I2C_RETRY) {
+			return -EIO;
+		} else
+			msleep(10);
+	}
+	return 0;
 }
 
 static int elan_ktf3k_i2c_read_packet(struct i2c_client *client, 
@@ -572,7 +579,7 @@ static int elan_ktf3k_i2c_read_packet(struct i2c_client *client,
 	struct i2c_msg msg[1];
 	__le16 le_addr;
 	struct elan_ktf3k_ts_data *ts;
-	int length = 0;
+	int retry = 0;
 
 	ts = i2c_get_clientdata(client);
 
@@ -580,14 +587,20 @@ static int elan_ktf3k_i2c_read_packet(struct i2c_client *client,
 	msg[0].flags = I2C_M_RD;
 	msg[0].len = value_length;
 	msg[0].buf = (u8 *) value;
-	down(&pSem);
-	length = i2c_transfer(adapter, msg, 1);
-	up(&pSem);
-	
-	if (length == 1) // only send on packet
-		return value_length;
-	else
-		return -EIO;
+
+	for (retry = 0; retry <= ELAN_I2C_RETRY; retry++) {
+		down(&pSem);
+		if (i2c_transfer(adapter, msg, 1) == 1) {
+			up(&pSem);
+			return value_length;
+		}
+		up(&pSem);
+		if (retry == ELAN_I2C_RETRY) {
+			return -EIO;
+		} else
+			msleep(10);
+	}
+	return 0;
 }
 
 static int __hello_packet_handler(struct i2c_client *client)
