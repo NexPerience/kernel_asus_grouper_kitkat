@@ -372,7 +372,7 @@ void VFP_bounce(u32 trigger, u32 fpexc, struct pt_regs *regs)
 	u32 fpscr, orig_fpscr, fpsid, exceptions;
 
 	pr_debug("VFP: bounce: trigger %08x fpexc %08x\n", trigger, fpexc);
-	atomic64_inc(&vfp_bounce_count);	
+	atomic64_inc(&vfp_bounce_count);
 
 	/*
 	 * At this point, FPEXC can have the following configuration:
@@ -647,7 +647,6 @@ static const struct file_operations vfp_bounce_fops = {
 	.read		= seq_read,
 	.llseek		= seq_lseek,
 	.release	= single_release,
-
 };
 #endif
 
@@ -657,7 +656,6 @@ static const struct file_operations vfp_bounce_fops = {
  * Kernel-side NEON support functions
  */
 void kernel_neon_begin(void)
-
 {
 	struct thread_info *thread = current_thread_info();
 	unsigned int cpu;
@@ -668,7 +666,8 @@ void kernel_neon_begin(void)
 	 * with preemption disabled. This will make sure that the kernel
 	 * mode NEON register contents never need to be preserved.
 	 */
-	BUG_ON(in_interrupt());
+
+//	BUG_ON(in_interrupt());
 	cpu = get_cpu();
 
 	fpexc = fmrx(FPEXC) | FPEXC_EN;
@@ -778,5 +777,5 @@ static int __init vfp_init(void)
 	}
 	return 0;
 }
-//original late_initcall(vfp_init);
+
 core_initcall(vfp_init);
