@@ -516,3 +516,4 @@ static void __exit sweep2wake_exit(void)
 module_init(sweep2wake_init);
 module_exit(sweep2wake_exit);
 
+
