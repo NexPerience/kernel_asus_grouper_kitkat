@@ -17,6 +17,11 @@
 #include <linux/sched.h>
 #include <linux/smp.h>
 #include <linux/init.h>
+#include <linux/uaccess.h>
+#include <linux/user.h>
+#include <linux/export.h>
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
 
 #include <asm/cputype.h>
 #include <asm/thread_notify.h>
@@ -36,18 +41,56 @@ void vfp_null_entry(void);
 void (*vfp_vector)(void) = vfp_null_entry;
 
 /*
- * The pointer to the vfpstate structure of the thread which currently
- * owns the context held in the VFP hardware, or NULL if the hardware
- * context is invalid.
- */
-union vfp_state *vfp_current_hw_state[NR_CPUS];
-
-/*
  * Dual-use variable.
  * Used in startup: set to non-zero if VFP checks fail
  * After startup, holds VFP architecture
  */
 unsigned int VFP_arch;
+
+/*
+ * The pointer to the vfpstate structure of the thread which currently
+ * owns the context held in the VFP hardware, or NULL if the hardware
+ * context is invalid.
+ *
+ * For UP, this is sufficient to tell which thread owns the VFP context.
+ * However, for SMP, we also need to check the CPU number stored in the
+ * saved state too to catch migrations.
+ */
+union vfp_state *vfp_current_hw_state[NR_CPUS];
+
+/*
+ * Is 'thread's most up to date state stored in this CPUs hardware?
+ * Must be called from non-preemptible context.
+ */
+static bool vfp_state_in_hw(unsigned int cpu, struct thread_info *thread)
+{
+#ifdef CONFIG_SMP
+	if (thread->vfpstate.hard.cpu != cpu)
+		return false;
+#endif
+	return vfp_current_hw_state[cpu] == &thread->vfpstate;
+}
+
+/*
+ * Force a reload of the VFP context from the thread structure.  We do
+ * this by ensuring that access to the VFP hardware is disabled, and
+ * clear vfp_current_hw_state.  Must be called from non-preemptible context.
+ */
+static void vfp_force_reload(unsigned int cpu, struct thread_info *thread)
+{
+	if (vfp_state_in_hw(cpu, thread)) {
+		fmxr(FPEXC, fmrx(FPEXC) & ~FPEXC_EN);
+		vfp_current_hw_state[cpu] = NULL;
+	}
+#ifdef CONFIG_SMP
+	thread->vfpstate.hard.cpu = NR_CPUS;
+#endif
+}
+
+/*
+ * Used for reporting emulation statistics via /proc
+ */
+static atomic64_t vfp_bounce_count = ATOMIC64_INIT(0);
 
 /*
  * Per-thread VFP initialization.
@@ -329,6 +372,7 @@ void VFP_bounce(u32 trigger, u32 fpexc, struct pt_regs *regs)
 	u32 fpscr, orig_fpscr, fpsid, exceptions;
 
 	pr_debug("VFP: bounce: trigger %08x fpexc %08x\n", trigger, fpexc);
+	atomic64_inc(&vfp_bounce_count);
 
 	/*
 	 * At this point, FPEXC can have the following configuration:
@@ -586,6 +630,73 @@ static int vfp_hotplug(struct notifier_block *b, unsigned long action,
 	return NOTIFY_OK;
 }
 
+#ifdef CONFIG_PROC_FS
+static int vfp_bounce_show(struct seq_file *m, void *v)
+{
+	seq_printf(m, "%llu\n", atomic64_read(&vfp_bounce_count));
+	return 0;
+}
+
+static int vfp_bounce_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, vfp_bounce_show, NULL);
+}
+
+static const struct file_operations vfp_bounce_fops = {
+	.open		= vfp_bounce_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+#endif
+
+#ifdef CONFIG_KERNEL_MODE_NEON
+
+/*
+ * Kernel-side NEON support functions
+ */
+void kernel_neon_begin(void)
+{
+	struct thread_info *thread = current_thread_info();
+	unsigned int cpu;
+	u32 fpexc;
+
+	/*
+	 * Kernel mode NEON is only allowed outside of interrupt context
+	 * with preemption disabled. This will make sure that the kernel
+	 * mode NEON register contents never need to be preserved.
+	 */
+
+//	BUG_ON(in_interrupt());
+	cpu = get_cpu();
+
+	fpexc = fmrx(FPEXC) | FPEXC_EN;
+	fmxr(FPEXC, fpexc);
+
+	/*
+	 * Save the userland NEON/VFP state. Under UP,
+	 * the owner could be a task other than 'current'
+	 */
+	if (vfp_state_in_hw(cpu, thread))
+		vfp_save_state(&thread->vfpstate, fpexc);
+#ifndef CONFIG_SMP
+	else if (vfp_current_hw_state[cpu] != NULL)
+		vfp_save_state(vfp_current_hw_state[cpu], fpexc);
+#endif
+	vfp_current_hw_state[cpu] = NULL;
+}
+EXPORT_SYMBOL(kernel_neon_begin);
+
+void kernel_neon_end(void)
+{
+	/* Disable the NEON/VFP unit. */
+	fmxr(FPEXC, fmrx(FPEXC) & ~FPEXC_EN);
+	put_cpu();
+}
+EXPORT_SYMBOL(kernel_neon_end);
+
+#endif /* CONFIG_KERNEL_MODE_NEON */
+
 /*
  * VFP support code initialisation.
  */
@@ -666,5 +777,5 @@ static int __init vfp_init(void)
 	}
 	return 0;
 }
-//original late_initcall(vfp_init);
+
 core_initcall(vfp_init);
